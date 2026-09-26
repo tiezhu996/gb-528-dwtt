@@ -27,7 +27,7 @@ const evidence = computed<RuleEvidence[]>(() => {
   const latest = runs.items[0]?.rule_results.filter((item) => item.rule_code === selected.value?.rule_code) ?? []
   const tested = rules.tests[selected.value.id]
   if (!tested) return latest
-  return [{ rule_code: tested.rule_code, rule_type: tested.rule_type, result: tested.result, severity: selected.value.severity, cue_codes: [], device_codes: [], window_start_ms: 0, window_end_ms: 0, actual_value: tested.actual_value, threshold_value: tested.threshold_value, unit: tested.unit, message: tested.boundary }, ...latest]
+  return [{ evidence_key: `probe-${selected.value.id}`, rule_code: tested.rule_code, rule_type: tested.rule_type, result: tested.result, severity: selected.value.severity, cue_codes: [], device_codes: [], window_start_ms: 0, window_end_ms: 0, actual_value: tested.actual_value, threshold_value: tested.threshold_value, unit: tested.unit, message: tested.boundary }, ...latest]
 })
 
 function reset() {

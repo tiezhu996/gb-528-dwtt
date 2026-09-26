@@ -1,5 +1,5 @@
 import { api, json, page } from './client'
-import type { RehearsalRun } from '../types/rehearsal'
+import type { RehearsalRun, DispositionDecision } from '../types/rehearsal'
 
 export async function listRuns(): Promise<RehearsalRun[]> {
   return (await page<RehearsalRun>('/rehearsals?page_size=100')).data
@@ -19,6 +19,10 @@ export async function submitRun(id: number, version: number, reason: string): Pr
 
 export async function reviewRun(id: number, version: number, decision: 'approve' | 'reject', reason: string): Promise<RehearsalRun> {
   return (await api<RehearsalRun>(`/rehearsals/${id}/review`, json('POST', { version, decision, reason }))).data
+}
+
+export async function registerDisposition(id: number, version: number, evidenceKey: string, decision: DispositionDecision, reason: string): Promise<RehearsalRun> {
+  return (await api<RehearsalRun>(`/rehearsals/${id}/dispositions`, json('POST', { version, evidence_key: evidenceKey, decision, reason }))).data
 }
 
 export async function compareRuns(id: number, otherId: number): Promise<Record<string, unknown>> {

@@ -93,6 +93,25 @@ func (h *RehearsalRunHandler) Review(c *gin.Context) {
 	util.OK(c, item)
 }
 
+func (h *RehearsalRunHandler) RegisterDisposition(c *gin.Context) {
+	id, err := util.ParseID(c, "id")
+	if err != nil {
+		util.Fail(c, err)
+		return
+	}
+	var request dto.RegisterDispositionRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		util.Fail(c, util.BadRequest("VALIDATION_ERROR", "evidence_key, decision, reason, and version are required", err.Error()))
+		return
+	}
+	item, err := h.service.RegisterDisposition(id, request, audit.ActorFromContext(c))
+	if err != nil {
+		util.Fail(c, err)
+		return
+	}
+	util.OK(c, item)
+}
+
 func (h *RehearsalRunHandler) Compare(c *gin.Context) {
 	id, err := util.ParseID(c, "id")
 	if err != nil {

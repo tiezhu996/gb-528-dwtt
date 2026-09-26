@@ -187,6 +187,22 @@ code, pre { font-family: "SFMono-Regular", Consolas, monospace; }
 .review-strip { margin-top: 34px; padding: 20px 0; border-top: 2px solid var(--ink); border-bottom: 1px solid var(--line-strong); }
 .review-strip > div { display: flex; gap: 8px; margin-top: 12px; }
 .review-strip > p { margin: 12px 0 0; color: var(--muted); font-size: .76rem; }
+.review-strip .gate-note { padding: 8px 10px; color: #7a5310; background: var(--amber-soft); border-left: 3px solid var(--amber); }
+
+.disposition-panel { margin-top: 30px; border-top: 2px solid var(--red); }
+.disposition-hint { margin: 4px 0 14px; color: var(--muted); font-size: .76rem; }
+.gap-alert { margin-bottom: 16px; }
+.gap-alert strong { color: #7a5310; }
+.disposition-row { padding: 14px 0; border-bottom: 1px solid var(--line); }
+.disposition-row:last-child { border-bottom: 0; }
+.disposition-row header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.disposition-row header .subtle { color: var(--muted); font-size: .72rem; }
+.disposition-message { margin: 8px 0; color: #3f4b48; font-size: .78rem; }
+.disposition-record { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; align-items: center; margin: 8px 0; padding: 10px 12px; background: #f0f4f2; border-left: 3px solid var(--teal); }
+.disposition-record .record-meta { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: .7rem; }
+.disposition-record .record-reason { grid-column: 1 / -1; margin: 2px 0 0; font-size: .78rem; color: var(--ink); }
+.disposition-form { display: grid; gap: 10px; margin-top: 12px; }
+.disposition-form .el-button { justify-self: start; }
 .empty-state { min-height: 280px; display: grid; place-content: center; justify-items: center; color: var(--muted); text-align: center; }
 .empty-state h2 { margin: 12px 0 4px; color: var(--ink); }
 
@@ -204,6 +220,8 @@ code, pre { font-family: "SFMono-Regular", Consolas, monospace; }
 .pending-row { display: grid; grid-template-columns: minmax(220px, 1fr) auto auto; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .pending-row > span { display: grid; }
 .pending-row small { color: var(--muted); font-size: .7rem; }
+.pending-row .gate-progress { color: #7a5310; font-weight: 700; }
+.pending-row .gate-progress.open { color: #2f6b57; }
 .audit-events { border-top: 2px solid var(--ink); }
 .audit-events pre { max-height: 130px; margin: 0; overflow: auto; color: #3f4b48; font-size: .64rem; line-height: 1.4; white-space: pre-wrap; }
 .audit-events code { font-size: .68rem; }

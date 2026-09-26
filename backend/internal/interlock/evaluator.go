@@ -8,6 +8,9 @@ import (
 )
 
 type RuleEvidence struct {
+	// EvidenceKey is the deterministic per-run identifier assigned after the
+	// final sort; reviewers reference it when registering dispositions.
+	EvidenceKey    string                    `json:"evidence_key"`
 	RuleCode       string                    `json:"rule_code"`
 	RuleType       string                    `json:"rule_type"`
 	Result         constants.InterlockResult `json:"result"`
@@ -75,6 +78,9 @@ func Evaluate(cueInputs []CueInput, deviceInputs []DeviceInput, rules []RuleInpu
 		}
 		return constants.SeverityRank(evidence[i].Result) > constants.SeverityRank(evidence[j].Result)
 	})
+	for index := range evidence {
+		evidence[index].EvidenceKey = fmt.Sprintf("evidence-%d", index)
+	}
 	severity := constants.ResultPass
 	for _, result := range evidence {
 		severity = constants.HighestSeverity(severity, result.Result)

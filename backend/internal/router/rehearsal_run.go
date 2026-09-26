@@ -12,5 +12,6 @@ func RegisterRehearsalRunRoutes(group *gin.RouterGroup, h *handler.RehearsalRunH
 	group.GET("/rehearsals/:id/compare", h.Compare)
 	group.POST("/rehearsals/run", write, h.Run)
 	group.POST("/rehearsals/:id/submit", write, h.Submit)
+	group.POST("/rehearsals/:id/dispositions", review, h.RegisterDisposition)
 	group.POST("/rehearsals/:id/review", review, h.Review)
 }

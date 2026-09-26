@@ -25,6 +25,25 @@ type ReviewRunRequest struct {
 	Reason   string `json:"reason" binding:"required,min=4,max=500"`
 }
 
+type RegisterDispositionRequest struct {
+	Version     uint   `json:"version" binding:"required,gte=1"`
+	EvidenceKey string `json:"evidence_key" binding:"required,min=1,max=64"`
+	Decision    string `json:"decision" binding:"required,oneof=accepted needs_rectification"`
+	Reason      string `json:"reason" binding:"required,min=4,max=500"`
+}
+
+// BlockerDisposition records how a safety reviewer handled one blocker or
+// invalid evidence item while the run awaited review.
+type BlockerDisposition struct {
+	EvidenceKey string    `json:"evidence_key"`
+	RuleCode    string    `json:"rule_code"`
+	Decision    string    `json:"decision"`
+	Reason      string    `json:"reason"`
+	ReviewerID  uint      `json:"reviewer_id"`
+	Reviewer    string    `json:"reviewer"`
+	DisposedAt  time.Time `json:"disposed_at"`
+}
+
 type TimelineSnapshot struct {
 	CueSetVersion  string                    `json:"cue_set_version"`
 	CueIDs         []uint                    `json:"cue_ids"`
@@ -39,20 +58,21 @@ type TimelineSnapshot struct {
 }
 
 type RehearsalRunResponse struct {
-	ID               uint                        `json:"id"`
-	CueSetVersion    string                      `json:"cue_set_version"`
-	RunStatus        constants.RehearsalStatus   `json:"run_status"`
-	TimelineSnapshot TimelineSnapshot            `json:"timeline_snapshot"`
-	RuleResults      []interlock.RuleEvidence    `json:"rule_results"`
-	CollisionWindows []interlock.CollisionWindow `json:"collision_windows"`
-	HighestSeverity  constants.InterlockResult   `json:"highest_severity"`
-	StartedBy        uint                        `json:"started_by"`
-	ReviewedBy       *uint                       `json:"reviewed_by"`
-	ReviewReason     string                      `json:"review_reason"`
-	Version          uint                        `json:"version"`
-	FinishedAt       time.Time                   `json:"finished_at"`
-	ReviewedAt       *time.Time                  `json:"reviewed_at"`
-	CreatedAt        time.Time                   `json:"created_at"`
+	ID                  uint                        `json:"id"`
+	CueSetVersion       string                      `json:"cue_set_version"`
+	RunStatus           constants.RehearsalStatus   `json:"run_status"`
+	TimelineSnapshot    TimelineSnapshot            `json:"timeline_snapshot"`
+	RuleResults         []interlock.RuleEvidence    `json:"rule_results"`
+	CollisionWindows    []interlock.CollisionWindow `json:"collision_windows"`
+	HighestSeverity     constants.InterlockResult   `json:"highest_severity"`
+	BlockerDispositions []BlockerDisposition        `json:"blocker_dispositions"`
+	StartedBy           uint                        `json:"started_by"`
+	ReviewedBy          *uint                       `json:"reviewed_by"`
+	ReviewReason        string                      `json:"review_reason"`
+	Version             uint                        `json:"version"`
+	FinishedAt          time.Time                   `json:"finished_at"`
+	ReviewedAt          *time.Time                  `json:"reviewed_at"`
+	CreatedAt           time.Time                   `json:"created_at"`
 }
 
 func RunFromModel(item model.RehearsalRun) (RehearsalRunResponse, error) {
@@ -64,9 +84,20 @@ func RunFromModel(item model.RehearsalRun) (RehearsalRunResponse, error) {
 	if err := json.Unmarshal(item.RuleResultsJSON, &results); err != nil {
 		return RehearsalRunResponse{}, fmt.Errorf("decode run %d rule results: %w", item.ID, err)
 	}
+	for index := range results {
+		if results[index].EvidenceKey == "" {
+			results[index].EvidenceKey = fmt.Sprintf("evidence-%d", index)
+		}
+	}
 	windows := []interlock.CollisionWindow{}
 	if err := json.Unmarshal(item.CollisionWindowsJSON, &windows); err != nil {
 		return RehearsalRunResponse{}, fmt.Errorf("decode run %d collision windows: %w", item.ID, err)
 	}
-	return RehearsalRunResponse{ID: item.ID, CueSetVersion: item.CueSetVersion, RunStatus: constants.RehearsalStatus(item.RunStatus), TimelineSnapshot: snapshot, RuleResults: results, CollisionWindows: windows, HighestSeverity: constants.InterlockResult(item.HighestSeverity), StartedBy: item.StartedBy, ReviewedBy: item.ReviewedBy, ReviewReason: item.ReviewReason, Version: item.Version, FinishedAt: item.FinishedAt, ReviewedAt: item.ReviewedAt, CreatedAt: item.CreatedAt}, nil
+	dispositions := []BlockerDisposition{}
+	if len(item.BlockerDispositionsJSON) > 0 {
+		if err := json.Unmarshal(item.BlockerDispositionsJSON, &dispositions); err != nil {
+			return RehearsalRunResponse{}, fmt.Errorf("decode run %d blocker dispositions: %w", item.ID, err)
+		}
+	}
+	return RehearsalRunResponse{ID: item.ID, CueSetVersion: item.CueSetVersion, RunStatus: constants.RehearsalStatus(item.RunStatus), TimelineSnapshot: snapshot, RuleResults: results, CollisionWindows: windows, HighestSeverity: constants.InterlockResult(item.HighestSeverity), BlockerDispositions: dispositions, StartedBy: item.StartedBy, ReviewedBy: item.ReviewedBy, ReviewReason: item.ReviewReason, Version: item.Version, FinishedAt: item.FinishedAt, ReviewedAt: item.ReviewedAt, CreatedAt: item.CreatedAt}, nil
 }

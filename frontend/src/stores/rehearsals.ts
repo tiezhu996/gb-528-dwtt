@@ -2,7 +2,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import * as api from '../api/rehearsals'
 import { errorMessage } from '../api/client'
-import type { RehearsalRun } from '../types/rehearsal'
+import type { DispositionDecision, RehearsalRun } from '../types/rehearsal'
 
 export const useRehearsalStore = defineStore('rehearsals', () => {
   const items = ref<RehearsalRun[]>([])
@@ -60,11 +60,17 @@ export const useRehearsalStore = defineStore('rehearsals', () => {
     return updated
   }
 
+  async function registerDisposition(item: RehearsalRun, evidenceKey: string, decision: DispositionDecision, reason: string) {
+    const updated = await api.registerDisposition(item.id, item.version, evidenceKey, decision, reason)
+    upsert(updated)
+    return updated
+  }
+
   function upsert(run: RehearsalRun) {
     const exists = items.value.some((item) => item.id === run.id)
     items.value = exists ? items.value.map((item) => (item.id === run.id ? run : item)) : [run, ...items.value]
     items.value.sort((a, b) => b.id - a.id)
   }
 
-  return { items, selectedId, selected, loading, running, error, load, refresh, run, submit, review }
+  return { items, selectedId, selected, loading, running, error, load, refresh, run, submit, review, registerDisposition }
 })

@@ -1,6 +1,17 @@
 import type { InterlockResult, RuleEvidence } from './interlock'
 
 export type RunStatus = 'evaluated' | 'blocked' | 'pending_review' | 'approved_for_rehearsal' | 'rejected'
+export type DispositionDecision = 'accepted' | 'needs_rectification'
+
+export interface BlockerDisposition {
+  evidence_key: string
+  rule_code: string
+  decision: DispositionDecision
+  reason: string
+  reviewer_id: number
+  reviewer: string
+  disposed_at: string
+}
 
 export interface GraphCue {
   id: number
@@ -55,6 +66,7 @@ export interface RehearsalRun {
   rule_results: RuleEvidence[]
   collision_windows: CollisionWindow[]
   highest_severity: InterlockResult
+  blocker_dispositions: BlockerDisposition[]
   started_by: number
   reviewed_by: number | null
   review_reason: string

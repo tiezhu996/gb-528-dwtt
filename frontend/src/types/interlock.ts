@@ -25,6 +25,7 @@ export interface InterlockRule {
 }
 
 export interface RuleEvidence {
+  evidence_key: string
   rule_code: string
   rule_type: string
   result: InterlockResult

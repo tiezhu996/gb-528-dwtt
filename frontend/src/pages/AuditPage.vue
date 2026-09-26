@@ -10,6 +10,7 @@ import { useAuditStore } from '../stores/audit'
 import { useCueStore } from '../stores/cues'
 import { useRehearsalStore } from '../stores/rehearsals'
 import type { RehearsalRun } from '../types/rehearsal'
+import { allBlockersAccepted, blockerEvidence, dispositionGaps, formatDispositionError } from '../utils/disposition'
 import { formatTimestamp } from '../utils/timeline'
 
 const audit = useAuditStore()
@@ -39,8 +40,15 @@ async function review(item: RehearsalRun, decision: 'approve' | 'reject') {
     await audit.load(search.value)
     ElMessage.success(`Run #${item.id} ${updated.run_status.replaceAll('_', ' ')}`)
   } catch (cause) {
-    localError.value = errorMessage(cause)
+    localError.value = formatDispositionError(cause)
   }
+}
+
+function blockerProgress(item: RehearsalRun): string {
+  const total = blockerEvidence(item).length
+  if (total === 0) return ''
+  const gaps = dispositionGaps(item)
+  return `${total - gaps.unregistered.length}/${total} registered · ${gaps.needsRectification.length} for rectification`
 }
 
 async function compare() {
@@ -83,7 +91,16 @@ onMounted(async () => {
     <div class="section-heading"><div><p class="eyebrow">REVIEW QUEUE</p><h2>{{ pending.length }} pending runs</h2></div><span>Reviewer-only decision</span></div>
     <el-input v-model="reason" type="textarea" :rows="2" maxlength="500" show-word-limit />
     <div v-if="pending.length === 0" class="empty-inline">No rehearsal evidence currently awaits review.</div>
-    <div v-for="item in pending" :key="item.id" class="pending-row"><span><strong>Run #{{ item.id }}</strong><small>{{ item.cue_set_version }} · {{ item.highest_severity }}</small></span><el-button type="success" :icon="CheckCircle2" @click="review(item, 'approve')">Approve evidence</el-button><el-button :icon="XCircle" @click="review(item, 'reject')">Reject</el-button></div>
+    <div v-for="item in pending" :key="item.id" class="pending-row">
+      <span>
+        <strong>Run #{{ item.id }}</strong>
+        <small>{{ item.cue_set_version }} · {{ item.highest_severity }}</small>
+        <small v-if="blockerProgress(item)" :class="['gate-progress', { open: allBlockersAccepted(item) }]">Blocker dispositions: {{ blockerProgress(item) }}</small>
+      </span>
+      <el-button v-if="!allBlockersAccepted(item)" disabled type="success" :icon="CheckCircle2">Approve blocked</el-button>
+      <el-button v-else type="success" :icon="CheckCircle2" @click="review(item, 'approve')">Approve evidence</el-button>
+      <el-button :icon="XCircle" @click="review(item, 'reject')">Reject</el-button>
+    </div>
   </section>
   <section class="data-section audit-events">
     <div class="section-heading"><div><p class="eyebrow">EVENT LEDGER</p><h2>{{ audit.items.length }} audit events</h2></div><span>Append-only application history</span></div>

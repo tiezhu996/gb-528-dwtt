@@ -39,7 +39,7 @@ const (
 
 func CanTransitionRun(from, to RehearsalStatus) bool {
 	switch from {
-	case RunEvaluated:
+	case RunEvaluated, RunBlocked:
 		return to == RunPendingReview
 	case RunPendingReview:
 		return to == RunApproved || to == RunRejected

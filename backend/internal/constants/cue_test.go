@@ -30,10 +30,13 @@ func TestRunTransitions(t *testing.T) {
 	if !CanTransitionRun(RunEvaluated, RunPendingReview) {
 		t.Fatal("evaluated run should be submittable")
 	}
+	if !CanTransitionRun(RunBlocked, RunPendingReview) {
+		t.Fatal("blocker-flagged run should be submittable so reviewers can register per-blocker dispositions")
+	}
 	if !CanTransitionRun(RunPendingReview, RunApproved) || !CanTransitionRun(RunPendingReview, RunRejected) {
 		t.Fatal("pending run should accept either reviewer decision")
 	}
-	if CanTransitionRun(RunBlocked, RunPendingReview) {
-		t.Fatal("blocked run must not be submittable")
+	if CanTransitionRun(RunApproved, RunPendingReview) || CanTransitionRun(RunRejected, RunPendingReview) {
+		t.Fatal("finished runs must not re-enter review")
 	}
 }

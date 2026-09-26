@@ -11,6 +11,7 @@ import (
 	"stage-rigging-cue-interlock/backend/internal/model"
 	"stage-rigging-cue-interlock/backend/internal/util"
 
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -78,6 +79,32 @@ func (r *RehearsalRunRepository) Transition(id, expectedVersion uint, from, to c
 		result := tx.Model(&model.RehearsalRun{}).Where("id = ? AND version = ? AND run_status = ?", id, expectedVersion, from).Updates(updates)
 		if result.Error != nil {
 			return fmt.Errorf("transition rehearsal run: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return util.Conflict("RUN_VERSION_CONFLICT", "rehearsal run state or version changed concurrently", nil)
+		}
+		if err := r.audit.WithTx(tx).Record(event); err != nil {
+			return err
+		}
+		if err := tx.First(&updated, id).Error; err != nil {
+			return fmt.Errorf("reload rehearsal run: %w", err)
+		}
+		return nil
+	})
+	return updated, err
+}
+
+// SaveDispositions replaces the blocker disposition list of a run that is
+// still pending review, bumping the optimistic-lock version and recording the
+// audit event in the same transaction.
+func (r *RehearsalRunRepository) SaveDispositions(id, expectedVersion uint, dispositions datatypes.JSON, event audit.Event) (model.RehearsalRun, error) {
+	var updated model.RehearsalRun
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&model.RehearsalRun{}).
+			Where("id = ? AND version = ? AND run_status = ?", id, expectedVersion, constants.RunPendingReview).
+			Updates(map[string]any{"blocker_dispositions_json": dispositions, "version": expectedVersion + 1})
+		if result.Error != nil {
+			return fmt.Errorf("save blocker dispositions: %w", result.Error)
 		}
 		if result.RowsAffected != 1 {
 			return util.Conflict("RUN_VERSION_CONFLICT", "rehearsal run state or version changed concurrently", nil)

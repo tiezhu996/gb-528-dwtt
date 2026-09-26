@@ -75,11 +75,11 @@ draft -> pending_review -> approved -> locked -> archived
 
 `InterlockResult = pass | warning | blocker | invalid`
 
-- 数据库：`rehearsal_runs.highest_severity` 显式 `CHECK` 约束，完整结果保存在 `rule_results_json`。
+- 数据库：`rehearsal_runs.highest_severity` 显式 `CHECK` 约束，完整结果保存在 `rule_results_json`，逐条 blocker 处置（复核人、时间、理由、决定）保存在 `blocker_dispositions_json`。
 - 后端：`backend/internal/constants/interlock.go`、`internal/interlock/evaluator.go`、`dto/rehearsal_run.go`。
 - 前端：`frontend/src/types/interlock.ts`、`types/rehearsal.ts`、`components/common/RuleEvidenceTable.vue`、`pages/RulesPage.vue`、`pages/RehearsalsPage.vue`。
 
-包含 blocker 或 invalid 的运行保存为 `blocked`，不能提交或批准。正常运行按 `evaluated -> pending_review -> approved_for_rehearsal | rejected` 流转；批准只代表离线证据已由人员复核。
+包含 blocker 或 invalid 的运行保存为 `blocked`。这类运行现在可以提交安全复核，但复核员必须在推演详情里对每条 blocker/invalid 证据逐条登记处置：接受必须写明接受理由，不接受则标记为“需要整改”。只要还有未登记条目或存在“需要整改”条目，批准一律不放行，响应会通过 `BLOCKER_DISPOSITION_INCOMPLETE` 的 `details.unregistered` 与 `details.needs_rectification` 说清还差哪几条（`evidence_key`、`rule_code`、`result`）；全部登记为接受后才可批准。正常运行按 `evaluated -> pending_review -> approved_for_rehearsal | rejected` 流转；批准只代表离线证据已由人员复核。
 
 ## API
 
@@ -97,12 +97,13 @@ draft -> pending_review -> approved -> locked -> archived
 | `POST` | `/api/v1/rules/:id/test` | 单阈值离线探针 |
 | `GET` | `/api/v1/rehearsals`、`/rehearsals/:id` | 运行列表和不可覆盖快照 |
 | `POST` | `/api/v1/rehearsals/run` | 对锁定 Cue 集执行确定性推演 |
-| `POST` | `/api/v1/rehearsals/:id/submit` | 提交安全复核 |
-| `POST` | `/api/v1/rehearsals/:id/review` | 复核员批准或拒绝 |
+| `POST` | `/api/v1/rehearsals/:id/submit` | 提交安全复核（含 blocker 运行） |
+| `POST` | `/api/v1/rehearsals/:id/dispositions` | 复核员对单条 blocker/invalid 证据登记处置（接受并写理由 / 需要整改） |
+| `POST` | `/api/v1/rehearsals/:id/review` | 复核员批准或拒绝；blocker 未全部登记为接受时拒绝批准 |
 | `GET` | `/api/v1/rehearsals/:id/compare?other_id=` | 比较两个运行版本 |
 | `GET` | `/api/v1/audit-events` | 复核员读取追加式审计事件 |
 
-统一响应包含 `data`（列表另含 `meta`）和 `request_id`；错误包含 `error.code`、`error.message`、可选 `error.details` 与 `request_id`。主要错误码包括 `CUE_DEPENDENCY_CYCLE`、`MISSING_CUE_DEPENDENCY`、`DUPLICATE_CUE_SEQUENCE`、`ACTION_OUT_OF_CUE_BOUNDS`、`CUE_NOT_LOCKED`、`BLOCKER_RUN_NOT_APPROVABLE`、各实体版本冲突、`AUTH_REQUIRED` 与 `FORBIDDEN`。
+统一响应包含 `data`（列表另含 `meta`）和 `request_id`；错误包含 `error.code`、`error.message`、可选 `error.details` 与 `request_id`。主要错误码包括 `CUE_DEPENDENCY_CYCLE`、`MISSING_CUE_DEPENDENCY`、`DUPLICATE_CUE_SEQUENCE`、`ACTION_OUT_OF_CUE_BOUNDS`、`CUE_NOT_LOCKED`、`BLOCKER_DISPOSITION_INCOMPLETE`、`DISPOSITION_TARGET_NOT_FOUND`、`DISPOSITION_TARGET_NOT_BLOCKER`、`RUN_NOT_IN_REVIEW`、各实体版本冲突、`AUTH_REQUIRED` 与 `FORBIDDEN`。
 
 ## 技术栈与结构
 
@@ -160,7 +161,7 @@ docker compose config --quiet
 - Compose 服务未变为 healthy：执行 `docker compose logs db backend frontend`，优先检查 PostgreSQL DSN、JWT 密钥长度和 Nginx 代理。
 - 返回 `CUE_DEPENDENCY_CYCLE`：查看 `error.details.evidence_path`，它包含闭合循环路径；修改草稿依赖并重新走复核/锁定。
 - 返回 `CUE_NOT_LOCKED`：所选 Cue 仍是草稿、待审或仅批准状态，需安全复核员锁定该明确版本。
-- 返回 `BLOCKER_RUN_NOT_SUBMITTABLE`：打开推演证据表，按规则编号、设备和时间窗口修正新 Cue 版本；历史运行不会被覆盖。
+- 返回 `BLOCKER_DISPOSITION_INCOMPLETE`：在推演详情的“BLOCKER DISPOSITIONS”面板逐条登记处置；`details.unregistered` 列出尚未登记的证据，`details.needs_rectification` 列出标记整改的证据，全部改为“接受（写明理由）”后才能批准。历史运行与证据不会被覆盖。
 - 返回 409 版本冲突：刷新实体后基于最新 `version` 或 `rule_version` 重试，不要复用旧表单版本。
 
 ## License

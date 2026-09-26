@@ -37,3 +37,20 @@ func HighestSeverity(values ...InterlockResult) InterlockResult {
 	}
 	return highest
 }
+
+type DispositionDecision string
+
+const (
+	DispositionAccepted           DispositionDecision = "accepted"
+	DispositionNeedsRectification DispositionDecision = "needs_rectification"
+)
+
+func (d DispositionDecision) Valid() bool {
+	return d == DispositionAccepted || d == DispositionNeedsRectification
+}
+
+// DispositionRequired reports whether an interlock result must receive a
+// reviewer disposition before a run can be approved for rehearsal.
+func DispositionRequired(result InterlockResult) bool {
+	return result == ResultBlocker || result == ResultInvalid
+}

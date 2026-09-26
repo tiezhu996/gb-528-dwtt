@@ -14,13 +14,16 @@ type RehearsalRun struct {
 	RuleResultsJSON      datatypes.JSON `gorm:"type:jsonb;not null"`
 	CollisionWindowsJSON datatypes.JSON `gorm:"type:jsonb;not null"`
 	HighestSeverity      string         `gorm:"size:16;not null;check:chk_run_severity,highest_severity IN ('pass','warning','blocker','invalid')"`
-	StartedBy            uint           `gorm:"not null"`
-	ReviewedBy           *uint
-	ReviewReason         string    `gorm:"size:500"`
-	Version              uint      `gorm:"not null;default:1"`
-	FinishedAt           time.Time `gorm:"not null"`
-	ReviewedAt           *time.Time
-	CreatedAt            time.Time
+	// BlockerDispositionsJSON stores the reviewer disposition registered for
+	// each blocker/invalid evidence item while the run awaits review.
+	BlockerDispositionsJSON datatypes.JSON `gorm:"type:jsonb"`
+	StartedBy               uint           `gorm:"not null"`
+	ReviewedBy              *uint
+	ReviewReason            string    `gorm:"size:500"`
+	Version                 uint      `gorm:"not null;default:1"`
+	FinishedAt              time.Time `gorm:"not null"`
+	ReviewedAt              *time.Time
+	CreatedAt               time.Time
 }
 
 func (RehearsalRun) TableName() string { return "rehearsal_runs" }
