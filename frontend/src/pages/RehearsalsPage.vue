@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { CheckCircle2, Play, RefreshCw, Send, XCircle } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
 import PageHeader from '../components/common/PageHeader.vue'
 import TimelineTrack from '../components/common/TimelineTrack.vue'
 import RuleEvidenceTable from '../components/common/RuleEvidenceTable.vue'
-import { errorMessage } from '../api/client'
+import BlockerDispositionPanel from '../components/common/BlockerDispositionPanel.vue'
+import { errorMessage, ApiError } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { useRehearsalRun } from '../hooks/useRehearsalRun'
 import { useCueStore } from '../stores/cues'
@@ -51,13 +53,36 @@ async function review(decision: 'approve' | 'reject') {
     const updated = await runs.review(selected.value, decision, reason.value)
     ElMessage.success(`Rehearsal ${updated.run_status.replaceAll('_', ' ')}`)
   } catch (cause) {
-    localError.value = errorMessage(cause)
+    localError.value = blockerGateMessage(cause)
   }
 }
+
+// The approval gate names each outstanding blocker in error.details; surface
+// that list so the reviewer knows exactly which entries still block approval.
+function blockerGateMessage(cause: unknown): string {
+  const base = errorMessage(cause)
+  if (!(cause instanceof ApiError) || cause.code !== 'BLOCKER_DISPOSITIONS_INCOMPLETE') return base
+  const details = cause.details as {
+    pending_disposition?: Array<{ rule_code: string; cue_codes?: string[]; window_start_ms: number; window_end_ms: number }>
+    needs_rectification?: Array<{ rule_code: string; cue_codes?: string[] }>
+  } | null
+  const lines: string[] = [base]
+  details?.pending_disposition?.forEach((entry) => lines.push(`· unregistered: ${entry.rule_code} (${(entry.cue_codes ?? []).join(', ') || 'rule set'})`))
+  details?.needs_rectification?.forEach((entry) => lines.push(`· needs rectification: ${entry.rule_code} (${(entry.cue_codes ?? []).join(', ') || 'rule set'})`))
+  return lines.join('\n')
+}
+
+const route = useRoute()
+const router = useRouter()
 
 onMounted(async () => {
   await Promise.all([cues.load(), runs.load()]).catch(() => undefined)
   selectedCueIds.value = cues.locked.map((item) => item.id)
+  const requested = Number(route.query.run)
+  if (Number.isFinite(requested) && requested > 0 && runs.items.some((item) => item.id === requested)) {
+    runs.selectedId = requested
+    void router.replace({ name: 'rehearsals' })
+  }
 })
 </script>
 
@@ -82,6 +107,7 @@ onMounted(async () => {
     <section class="run-summary" :class="selected.highest_severity">
       <div><p class="eyebrow">RUN #{{ selected.id }} · VERSION {{ selected.version }}</p><h2>{{ selected.run_status.replaceAll('_', ' ') }}</h2></div>
       <div class="run-stat"><span>Highest evidence</span><strong>{{ selected.highest_severity }}</strong></div>
+      <div v-if="selected.blocker_count > 0" class="run-stat"><span>Blockers accepted</span><strong>{{ selected.blockers_accepted }}/{{ selected.blocker_count }}</strong></div>
       <div class="run-stat"><span>Rule results</span><strong>{{ selected.rule_results.length }}</strong></div>
       <div class="run-stat"><span>Collision windows</span><strong>{{ selected.collision_windows.length }}</strong></div>
       <span v-if="polling" class="polling"><RefreshCw :size="14" /> refreshing</span>
@@ -103,13 +129,27 @@ onMounted(async () => {
         <div v-for="window in selected.collision_windows" :key="`${window.safety_zone}-${window.start_ms}`" class="collision-row"><strong>{{ window.safety_zone }}</strong><span>{{ window.cue_codes.join(' + ') }}</span><small>{{ window.start_ms }}–{{ window.end_ms }} ms</small></div>
       </aside>
     </div>
+    <BlockerDispositionPanel
+      v-if="selected.blocker_count > 0"
+      :run="selected"
+      :can-register="canReview && selected.run_status === 'pending_review'"
+      :register="runs.registerDisposition"
+    />
     <section class="review-strip">
       <el-input v-model="reason" type="textarea" :rows="2" maxlength="500" show-word-limit />
       <div>
-        <el-button v-if="canProgram && selected.run_status === 'evaluated'" type="primary" :icon="Send" @click="submit">Submit safety review</el-button>
-        <el-button v-if="canReview && selected.run_status === 'pending_review'" type="success" :icon="CheckCircle2" @click="review('approve')">Approve rehearsal evidence</el-button>
+        <el-button v-if="canProgram && (selected.run_status === 'evaluated' || selected.run_status === 'blocked')" type="primary" :icon="Send" @click="submit">Submit safety review</el-button>
+        <el-tooltip
+          v-if="canReview && selected.run_status === 'pending_review' && selected.blocker_count > 0 && selected.blockers_accepted !== selected.blocker_count"
+          :content="`Cannot approve yet: ${selected.blockers_pending_disposition} blocker(s) unregistered and ${selected.blockers_needs_rectification} marked for rectification. Every blocker must be accepted.`"
+          placement="top"
+        >
+          <span><el-button type="success" :icon="CheckCircle2" disabled>Approve blocked</el-button></span>
+        </el-tooltip>
+        <el-button v-else-if="canReview && selected.run_status === 'pending_review'" type="success" :icon="CheckCircle2" @click="review('approve')">Approve rehearsal evidence</el-button>
         <el-button v-if="canReview && selected.run_status === 'pending_review'" :icon="XCircle" @click="review('reject')">Reject evidence</el-button>
       </div>
+      <p v-if="selected.blocker_count > 0">Blocker runs enter review by design. Approval passes only when every blocker carries a reviewer's written acceptance; “needs rectification” blockers force a new cue version and a fresh run.</p>
       <p>Human approval records review of this offline snapshot only. It is not an executable cue, machinery release, or live safety authorization.</p>
     </section>
   </template>

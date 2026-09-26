@@ -37,9 +37,25 @@ const (
 	RunRejected      RehearsalStatus = "rejected"
 )
 
+// BlockerDisposition is the reviewer's per-blocker decision registered on a
+// submitted rehearsal run. Runs with blocker evidence can only be approved
+// once every blocker has been registered as accepted with a written reason.
+type BlockerDispositionType string
+
+const (
+	DispositionAccepted           BlockerDispositionType = "accepted"
+	DispositionNeedsRectification BlockerDispositionType = "needs_rectification"
+)
+
+func (d BlockerDispositionType) Valid() bool {
+	return d == DispositionAccepted || d == DispositionNeedsRectification
+}
+
 func CanTransitionRun(from, to RehearsalStatus) bool {
 	switch from {
-	case RunEvaluated:
+	case RunEvaluated, RunBlocked:
+		// blocker runs can be submitted: the reviewer must register a
+		// per-blocker disposition before approval can pass.
 		return to == RunPendingReview
 	case RunPendingReview:
 		return to == RunApproved || to == RunRejected

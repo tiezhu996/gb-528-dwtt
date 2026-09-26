@@ -204,6 +204,8 @@ code, pre { font-family: "SFMono-Regular", Consolas, monospace; }
 .pending-row { display: grid; grid-template-columns: minmax(220px, 1fr) auto auto; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .pending-row > span { display: grid; }
 .pending-row small { color: var(--muted); font-size: .7rem; }
+.pending-row .blocker-state.held { color: #b5531f; font-weight: 750; }
+.pending-row .blocker-state.ready { color: #2f7a5b; font-weight: 750; }
 .audit-events { border-top: 2px solid var(--ink); }
 .audit-events pre { max-height: 130px; margin: 0; overflow: auto; color: #3f4b48; font-size: .64rem; line-height: 1.4; white-space: pre-wrap; }
 .audit-events code { font-size: .68rem; }

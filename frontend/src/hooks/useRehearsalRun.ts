@@ -18,7 +18,7 @@ export function useRehearsalRun() {
     timer = window.setInterval(async () => {
       try {
         const run = await store.refresh(runId)
-        if (!['evaluated', 'pending_review'].includes(run.run_status)) stopPolling()
+        if (!['evaluated', 'blocked', 'pending_review'].includes(run.run_status)) stopPolling()
       } catch {
         stopPolling()
       }

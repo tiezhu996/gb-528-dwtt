@@ -51,12 +51,13 @@ func main() {
 	cueRepository := repository.NewCueDefinitionRepository(db, auditRepository)
 	ruleRepository := repository.NewInterlockRuleRepository(db, auditRepository)
 	runRepository := repository.NewRehearsalRunRepository(db, auditRepository)
+	dispositionRepository := repository.NewBlockerDispositionRepository(db, auditRepository)
 
 	authService := auth.NewService(authRepository, cfg.JWTSecret, cfg.JWTTTL)
 	deviceService := service.NewRiggingDeviceService(deviceRepository, ruleRepository)
 	cueService := service.NewCueDefinitionService(cueRepository, deviceRepository)
 	ruleService := service.NewInterlockRuleService(ruleRepository, deviceRepository)
-	runService := service.NewRehearsalRunService(runRepository, cueRepository, deviceRepository, ruleRepository, cfg.TimelineStepMS, cfg.MaxCuesPerRun)
+	runService := service.NewRehearsalRunService(runRepository, dispositionRepository, cueRepository, deviceRepository, ruleRepository, cfg.TimelineStepMS, cfg.MaxCuesPerRun)
 
 	engine := gin.New()
 	engine.Use(middleware.RequestID())

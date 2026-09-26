@@ -1,11 +1,40 @@
 package interlock
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 
 	"stage-rigging-cue-interlock/backend/internal/constants"
 )
+
+// EvidenceKey returns a stable identifier for one piece of rule evidence
+// inside a rehearsal run. Reviewer dispositions reference the key instead of
+// an array index so that adding or reordering non-blocking evidence can never
+// attach a decision to the wrong blocker.
+func EvidenceKey(evidence RuleEvidence) string {
+	payload, err := json.Marshal(evidence)
+	if err != nil {
+		// RuleEvidence only contains JSON-safe primitives and slices.
+		payload = []byte(fmt.Sprintf("%s|%d|%d", evidence.RuleCode, evidence.WindowStartMS, evidence.WindowEndMS))
+	}
+	digest := sha256.Sum256(payload)
+	return "ev-" + hex.EncodeToString(digest[:12])
+}
+
+// BlockingEvidence returns the subset of evidence that requires a reviewer
+// disposition before a blocker run may be approved.
+func BlockingEvidence(evidence []RuleEvidence) []RuleEvidence {
+	blocking := make([]RuleEvidence, 0)
+	for _, item := range evidence {
+		if item.Result.Blocking() {
+			blocking = append(blocking, item)
+		}
+	}
+	return blocking
+}
 
 type RuleEvidence struct {
 	RuleCode       string                    `json:"rule_code"`

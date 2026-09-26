@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { CheckCircle2, GitCompareArrows, Search, XCircle } from 'lucide-vue-next'
+import { useRouter } from 'vue-router'
+import { CheckCircle2, GitCompareArrows, Search, ShieldQuestion, XCircle } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
 import PageHeader from '../components/common/PageHeader.vue'
 import CueStatusBadge from '../components/common/CueStatusBadge.vue'
 import { compareRuns } from '../api/rehearsals'
-import { errorMessage } from '../api/client'
+import { ApiError, errorMessage } from '../api/client'
 import { useAuditStore } from '../stores/audit'
 import { useCueStore } from '../stores/cues'
 import { useRehearsalStore } from '../stores/rehearsals'
@@ -15,6 +16,7 @@ import { formatTimestamp } from '../utils/timeline'
 const audit = useAuditStore()
 const cues = useCueStore()
 const runs = useRehearsalStore()
+const router = useRouter()
 const search = ref('')
 const reason = ref('Safety reviewer inspected the immutable evidence and offline boundary.')
 const localError = ref('')
@@ -22,6 +24,14 @@ const compareLeft = ref<number | null>(null)
 const compareRight = ref<number | null>(null)
 const comparison = ref<Record<string, unknown> | null>(null)
 const pending = computed(() => runs.items.filter((item) => item.run_status === 'pending_review'))
+
+function blockersReady(item: RehearsalRun): boolean {
+  return item.blocker_count === 0 || item.blockers_accepted === item.blocker_count
+}
+
+function openRunDetails(item: RehearsalRun) {
+  router.push({ name: 'rehearsals', query: { run: String(item.id) } })
+}
 
 async function loadAudit() {
   localError.value = ''
@@ -34,12 +44,20 @@ async function loadAudit() {
 
 async function review(item: RehearsalRun, decision: 'approve' | 'reject') {
   localError.value = ''
+  if (decision === 'approve' && !blockersReady(item)) {
+    localError.value = `Run #${item.id} cannot be approved: ${item.blockers_pending_disposition} blocker(s) are unregistered and ${item.blockers_needs_rectification} are marked for rectification. Open the run detail and register every blocker first.`
+    return
+  }
   try {
     const updated = await runs.review(item, decision, reason.value)
     await audit.load(search.value)
     ElMessage.success(`Run #${item.id} ${updated.run_status.replaceAll('_', ' ')}`)
   } catch (cause) {
-    localError.value = errorMessage(cause)
+    if (cause instanceof ApiError && cause.code === 'BLOCKER_DISPOSITIONS_INCOMPLETE') {
+      localError.value = `${cause.message} Open the run detail to register the outstanding blockers. · request ${cause.requestId}`
+    } else {
+      localError.value = errorMessage(cause)
+    }
   }
 }
 
@@ -83,7 +101,25 @@ onMounted(async () => {
     <div class="section-heading"><div><p class="eyebrow">REVIEW QUEUE</p><h2>{{ pending.length }} pending runs</h2></div><span>Reviewer-only decision</span></div>
     <el-input v-model="reason" type="textarea" :rows="2" maxlength="500" show-word-limit />
     <div v-if="pending.length === 0" class="empty-inline">No rehearsal evidence currently awaits review.</div>
-    <div v-for="item in pending" :key="item.id" class="pending-row"><span><strong>Run #{{ item.id }}</strong><small>{{ item.cue_set_version }} · {{ item.highest_severity }}</small></span><el-button type="success" :icon="CheckCircle2" @click="review(item, 'approve')">Approve evidence</el-button><el-button :icon="XCircle" @click="review(item, 'reject')">Reject</el-button></div>
+    <div v-for="item in pending" :key="item.id" class="pending-row">
+      <span>
+        <strong>Run #{{ item.id }}</strong>
+        <small>{{ item.cue_set_version }} · {{ item.highest_severity }}</small>
+        <small v-if="item.blocker_count > 0" :class="['blocker-state', blockersReady(item) ? 'ready' : 'held']">
+          Blockers {{ item.blockers_accepted }}/{{ item.blocker_count }} accepted · {{ item.blockers_pending_disposition }} unregistered · {{ item.blockers_needs_rectification }} rectify
+        </small>
+      </span>
+      <el-button v-if="item.blocker_count > 0" :icon="ShieldQuestion" @click="openRunDetails(item)">Register blockers</el-button>
+      <el-tooltip
+        v-if="item.blocker_count > 0 && !blockersReady(item)"
+        content="Approve is withheld until every blocker is accepted with a reason in the run detail."
+        placement="top"
+      >
+        <span><el-button type="success" :icon="CheckCircle2" disabled>Approve evidence</el-button></span>
+      </el-tooltip>
+      <el-button v-else type="success" :icon="CheckCircle2" @click="review(item, 'approve')">Approve evidence</el-button>
+      <el-button :icon="XCircle" @click="review(item, 'reject')">Reject</el-button>
+    </div>
   </section>
   <section class="data-section audit-events">
     <div class="section-heading"><div><p class="eyebrow">EVENT LEDGER</p><h2>{{ audit.items.length }} audit events</h2></div><span>Append-only application history</span></div>

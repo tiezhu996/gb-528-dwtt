@@ -12,6 +12,7 @@ import (
 	"stage-rigging-cue-interlock/backend/internal/util"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type RehearsalRunRepository struct {
@@ -89,6 +90,83 @@ func (r *RehearsalRunRepository) Transition(id, expectedVersion uint, from, to c
 			return fmt.Errorf("reload rehearsal run: %w", err)
 		}
 		return nil
+	})
+	return updated, err
+}
+
+type BlockerDispositionRepository struct {
+	db    *gorm.DB
+	audit *audit.Repository
+}
+
+func NewBlockerDispositionRepository(db *gorm.DB, auditRepository *audit.Repository) *BlockerDispositionRepository {
+	return &BlockerDispositionRepository{db: db, audit: auditRepository}
+}
+
+// ListByRun returns every registered disposition for one run, oldest first.
+func (r *BlockerDispositionRepository) ListByRun(runID uint) ([]model.BlockerDisposition, error) {
+	var items []model.BlockerDisposition
+	if err := r.db.Where("run_id = ?", runID).Order("id ASC").Find(&items).Error; err != nil {
+		return nil, fmt.Errorf("list blocker dispositions: %w", err)
+	}
+	return items, nil
+}
+
+// ListByRuns batches dispositions for run listings, keyed by run id.
+func (r *BlockerDispositionRepository) ListByRuns(runIDs []uint) (map[uint][]model.BlockerDisposition, error) {
+	grouped := make(map[uint][]model.BlockerDisposition, len(runIDs))
+	if len(runIDs) == 0 {
+		return grouped, nil
+	}
+	var items []model.BlockerDisposition
+	if err := r.db.Where("run_id IN ?", runIDs).Order("id ASC").Find(&items).Error; err != nil {
+		return nil, fmt.Errorf("list blocker dispositions: %w", err)
+	}
+	for _, item := range items {
+		grouped[item.RunID] = append(grouped[item.RunID], item)
+	}
+	return grouped, nil
+}
+
+// Register upserts one reviewer disposition and bumps the run's optimistic
+// lock version atomically. Run status and evidence key are validated by the
+// caller; the version guard rejects concurrent decisions.
+func (r *BlockerDispositionRepository) Register(runID, expectedVersion uint, disposition model.BlockerDisposition, event audit.Event) (model.RehearsalRun, error) {
+	var updated model.RehearsalRun
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var run model.RehearsalRun
+		lock := tx
+		if tx.Dialector.Name() == "postgres" {
+			lock = tx.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		if err := lock.First(&run, runID).Error; err != nil {
+			return fmt.Errorf("lock rehearsal run for disposition: %w", err)
+		}
+		if run.Version != expectedVersion {
+			return util.Conflict("RUN_VERSION_CONFLICT", "rehearsal run state or version changed concurrently", nil)
+		}
+		now := time.Now().UTC()
+		disposition.RunID = runID
+		disposition.RegisteredAt = now
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "run_id"}, {Name: "evidence_key"}},
+			DoUpdates: clause.AssignmentColumns([]string{"decision", "reason", "reviewed_by", "reviewer_name", "registered_at", "updated_at"}),
+		}).Create(&disposition).Error; err != nil {
+			return fmt.Errorf("register blocker disposition: %w", err)
+		}
+		result := tx.Model(&model.RehearsalRun{}).
+			Where("id = ? AND version = ?", runID, expectedVersion).
+			Update("version", expectedVersion+1)
+		if result.Error != nil {
+			return fmt.Errorf("bump rehearsal run version: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return util.Conflict("RUN_VERSION_CONFLICT", "rehearsal run state or version changed concurrently", nil)
+		}
+		if err := r.audit.WithTx(tx).Record(event); err != nil {
+			return err
+		}
+		return tx.First(&updated, runID).Error
 	})
 	return updated, err
 }

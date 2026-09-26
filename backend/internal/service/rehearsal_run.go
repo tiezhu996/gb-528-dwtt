@@ -23,6 +23,7 @@ import (
 
 type RehearsalRunService struct {
 	runs           *repository.RehearsalRunRepository
+	dispositions   *repository.BlockerDispositionRepository
 	cues           *repository.CueDefinitionRepository
 	devices        *repository.RiggingDeviceRepository
 	rules          *repository.InterlockRuleRepository
@@ -30,8 +31,8 @@ type RehearsalRunService struct {
 	maxCues        int
 }
 
-func NewRehearsalRunService(runs *repository.RehearsalRunRepository, cues *repository.CueDefinitionRepository, devices *repository.RiggingDeviceRepository, rules *repository.InterlockRuleRepository, timelineStepMS int64, maxCues int) *RehearsalRunService {
-	return &RehearsalRunService{runs: runs, cues: cues, devices: devices, rules: rules, timelineStepMS: timelineStepMS, maxCues: maxCues}
+func NewRehearsalRunService(runs *repository.RehearsalRunRepository, dispositions *repository.BlockerDispositionRepository, cues *repository.CueDefinitionRepository, devices *repository.RiggingDeviceRepository, rules *repository.InterlockRuleRepository, timelineStepMS int64, maxCues int) *RehearsalRunService {
+	return &RehearsalRunService{runs: runs, dispositions: dispositions, cues: cues, devices: devices, rules: rules, timelineStepMS: timelineStepMS, maxCues: maxCues}
 }
 
 func (s *RehearsalRunService) List(page, pageSize int, status, severity, search string) ([]dto.RehearsalRunResponse, int64, error) {
@@ -39,9 +40,17 @@ func (s *RehearsalRunService) List(page, pageSize int, status, severity, search 
 	if err != nil {
 		return nil, 0, err
 	}
+	ids := make([]uint, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	grouped, err := s.dispositions.ListByRuns(ids)
+	if err != nil {
+		return nil, 0, err
+	}
 	responses := make([]dto.RehearsalRunResponse, 0, len(items))
 	for _, item := range items {
-		response, mapErr := dto.RunFromModel(item)
+		response, mapErr := dto.RunFromModel(item, grouped[item.ID])
 		if mapErr != nil {
 			return nil, 0, mapErr
 		}
@@ -51,11 +60,25 @@ func (s *RehearsalRunService) List(page, pageSize int, status, severity, search 
 }
 
 func (s *RehearsalRunService) Get(id uint) (dto.RehearsalRunResponse, error) {
+	return s.responseForRunID(id)
+}
+
+// responseForRunID loads the latest run state plus all registered blocker
+// dispositions and maps the complete reviewer-facing response.
+func (s *RehearsalRunService) responseForRunID(id uint) (dto.RehearsalRunResponse, error) {
 	item, err := s.runs.Get(id)
 	if err != nil {
 		return dto.RehearsalRunResponse{}, err
 	}
-	return dto.RunFromModel(item)
+	return s.responseForRun(item)
+}
+
+func (s *RehearsalRunService) responseForRun(item model.RehearsalRun) (dto.RehearsalRunResponse, error) {
+	dispositions, err := s.dispositions.ListByRun(item.ID)
+	if err != nil {
+		return dto.RehearsalRunResponse{}, err
+	}
+	return dto.RunFromModel(item, dispositions)
 }
 
 func (s *RehearsalRunService) Run(request dto.RunRehearsalRequest, actor audit.ActorContext) (dto.RehearsalRunResponse, error) {
@@ -138,7 +161,7 @@ func (s *RehearsalRunService) Run(request dto.RunRehearsalRequest, actor audit.A
 	if err := s.runs.Create(&item, audit.NewEvent(actor, "rehearsal_run.evaluate", "rehearsal_run", 0, "{}", after)); err != nil {
 		return dto.RehearsalRunResponse{}, err
 	}
-	return dto.RunFromModel(item)
+	return s.responseForRun(item)
 }
 
 func (s *RehearsalRunService) Submit(id uint, request dto.RunTransitionRequest, actor audit.ActorContext) (dto.RehearsalRunResponse, error) {
@@ -147,19 +170,18 @@ func (s *RehearsalRunService) Submit(id uint, request dto.RunTransitionRequest, 
 		return dto.RehearsalRunResponse{}, err
 	}
 	from := constants.RehearsalStatus(current.RunStatus)
-	if from == constants.RunBlocked {
-		return dto.RehearsalRunResponse{}, util.Unprocessable("BLOCKER_RUN_NOT_SUBMITTABLE", "runs with blocker evidence cannot be submitted for approval", map[string]any{"highest_severity": current.HighestSeverity})
-	}
+	// blocker runs may enter review: the reviewer must register an accept-with
+	// -reason or needs_rectification decision on every blocker before approval.
 	if !constants.CanTransitionRun(from, constants.RunPendingReview) {
-		return dto.RehearsalRunResponse{}, util.Unprocessable("INVALID_RUN_TRANSITION", "only an evaluated run can be submitted", map[string]any{"current_status": from})
+		return dto.RehearsalRunResponse{}, util.Unprocessable("INVALID_RUN_TRANSITION", "only an evaluated or blocker run can be submitted", map[string]any{"current_status": from})
 	}
 	before := runStateSummary(current)
-	after := util.SummaryJSON(map[string]any{"run_status": constants.RunPendingReview, "version": request.Version + 1, "reason": request.Reason})
+	after := util.SummaryJSON(map[string]any{"run_status": constants.RunPendingReview, "version": request.Version + 1, "reason": request.Reason, "blocker_count": countBlockingEvidence(current)})
 	updated, err := s.runs.Transition(id, request.Version, from, constants.RunPendingReview, nil, strings.TrimSpace(request.Reason), audit.NewEvent(actor, "rehearsal_run.submit_review", "rehearsal_run", id, before, after))
 	if err != nil {
 		return dto.RehearsalRunResponse{}, err
 	}
-	return dto.RunFromModel(updated)
+	return s.responseForRun(updated)
 }
 
 func (s *RehearsalRunService) Review(id uint, request dto.ReviewRunRequest, actor audit.ActorContext) (dto.RehearsalRunResponse, error) {
@@ -173,20 +195,76 @@ func (s *RehearsalRunService) Review(id uint, request dto.ReviewRunRequest, acto
 	if request.Decision == "approve" {
 		target = constants.RunApproved
 		action = "rehearsal_run.approve"
-		if current.HighestSeverity == string(constants.ResultBlocker) || current.HighestSeverity == string(constants.ResultInvalid) {
-			return dto.RehearsalRunResponse{}, util.Unprocessable("BLOCKER_RUN_NOT_APPROVABLE", "blocker or invalid evidence prevents rehearsal approval", map[string]any{"highest_severity": current.HighestSeverity})
+		if err := s.ensureAllBlockersAccepted(current); err != nil {
+			return dto.RehearsalRunResponse{}, err
 		}
 	}
 	if !constants.CanTransitionRun(from, target) {
 		return dto.RehearsalRunResponse{}, util.Unprocessable("INVALID_RUN_TRANSITION", fmt.Sprintf("cannot transition run from %s to %s", from, target), map[string]any{"from": from, "to": target})
 	}
 	before := runStateSummary(current)
-	after := util.SummaryJSON(map[string]any{"run_status": target, "version": request.Version + 1, "reviewer_id": actor.ID, "reason": request.Reason, "boundary": "offline rehearsal approval only; no machinery command or operational clearance"})
+	dispositions, err := s.dispositions.ListByRun(id)
+	if err != nil {
+		return dto.RehearsalRunResponse{}, err
+	}
+	after := util.SummaryJSON(map[string]any{"run_status": target, "version": request.Version + 1, "reviewer_id": actor.ID, "reason": request.Reason, "blocker_dispositions": len(dispositions), "boundary": "offline rehearsal approval only; no machinery command or operational clearance"})
 	updated, err := s.runs.Transition(id, request.Version, from, target, &actor.ID, strings.TrimSpace(request.Reason), audit.NewEvent(actor, action, "rehearsal_run", id, before, after))
 	if err != nil {
 		return dto.RehearsalRunResponse{}, err
 	}
-	return dto.RunFromModel(updated)
+	return s.responseForRun(updated)
+}
+
+// ensureAllBlockersAccepted enforces the blocker approval gate: approval is
+// refused while any blocking evidence lacks a disposition or is marked for
+// rectification. The error details name every outstanding blocker.
+func (s *RehearsalRunService) ensureAllBlockersAccepted(current model.RehearsalRun) error {
+	var results []interlock.RuleEvidence
+	if err := json.Unmarshal(current.RuleResultsJSON, &results); err != nil {
+		return fmt.Errorf("decode run %d rule results for approval gate: %w", current.ID, err)
+	}
+	blocking := interlock.BlockingEvidence(results)
+	if len(blocking) == 0 {
+		return nil
+	}
+	dispositions, err := s.dispositions.ListByRun(current.ID)
+	if err != nil {
+		return err
+	}
+	byKey := make(map[string]model.BlockerDisposition, len(dispositions))
+	for _, disposition := range dispositions {
+		byKey[disposition.EvidenceKey] = disposition
+	}
+	pending := make([]map[string]any, 0)
+	rectifying := make([]map[string]any, 0)
+	for _, evidence := range blocking {
+		key := interlock.EvidenceKey(evidence)
+		entry := map[string]any{"evidence_key": key, "rule_code": evidence.RuleCode, "cue_codes": evidence.CueCodes, "device_codes": evidence.DeviceCodes, "window_start_ms": evidence.WindowStartMS, "window_end_ms": evidence.WindowEndMS}
+		disposition, registered := byKey[key]
+		switch {
+		case !registered:
+			pending = append(pending, entry)
+		case constants.BlockerDispositionType(disposition.Decision) == constants.DispositionNeedsRectification:
+			entry["disposition_id"] = disposition.ID
+			rectifying = append(rectifying, entry)
+		}
+	}
+	if len(pending) == 0 && len(rectifying) == 0 {
+		return nil
+	}
+	return util.Unprocessable("BLOCKER_DISPOSITIONS_INCOMPLETE",
+		fmt.Sprintf("approval withheld: %d blocker(s) still lack a reviewer disposition and %d blocker(s) are marked for rectification; every blocker must be accepted with a written reason", len(pending), len(rectifying)),
+		map[string]any{"run_id": current.ID, "blocker_total": len(blocking), "pending_disposition": pending, "needs_rectification": rectifying})
+}
+
+// countBlockingEvidence reports how many stored evidence rows require a
+// reviewer disposition on a blocker run.
+func countBlockingEvidence(item model.RehearsalRun) int {
+	var results []interlock.RuleEvidence
+	if err := json.Unmarshal(item.RuleResultsJSON, &results); err != nil {
+		return 0
+	}
+	return len(interlock.BlockingEvidence(results))
 }
 
 func (s *RehearsalRunService) Compare(id, otherID uint) (map[string]any, error) {
@@ -253,4 +331,70 @@ func uniqueIDSlice(ids []uint) map[uint]struct{} {
 
 func runStateSummary(item model.RehearsalRun) string {
 	return util.SummaryJSON(map[string]any{"run_status": item.RunStatus, "version": item.Version, "highest_severity": item.HighestSeverity, "reviewed_by": item.ReviewedBy, "cue_set_version": item.CueSetVersion})
+}
+
+// RegisterDisposition validates and stores one reviewer decision on one
+// piece of blocking evidence. The decision can be revised while the run
+// remains in review; only runs in pending_review accept dispositions.
+func (s *RehearsalRunService) RegisterDisposition(runID uint, request dto.RegisterBlockerDispositionRequest, actor audit.ActorContext) (dto.RehearsalRunResponse, error) {
+	current, err := s.runs.Get(runID)
+	if err != nil {
+		return dto.RehearsalRunResponse{}, err
+	}
+	if constants.RehearsalStatus(current.RunStatus) != constants.RunPendingReview {
+		return dto.RehearsalRunResponse{}, util.Unprocessable("RUN_NOT_PENDING_REVIEW", "blocker dispositions can only be registered while the run is awaiting review", map[string]any{"current_status": current.RunStatus})
+	}
+	evidence, err := findBlockingEvidence(current, request.EvidenceKey)
+	if err != nil {
+		return dto.RehearsalRunResponse{}, err
+	}
+	decision := constants.BlockerDispositionType(request.Decision)
+	if !decision.Valid() {
+		return dto.RehearsalRunResponse{}, util.BadRequest("VALIDATION_ERROR", "decision must be accepted or needs_rectification", nil)
+	}
+	reason := strings.TrimSpace(request.Reason)
+	existing, _ := s.dispositions.ListByRun(runID)
+	before := util.SummaryJSON(map[string]any{"run_status": current.RunStatus, "version": request.Version, "evidence_key": request.EvidenceKey, "prior_disposition": priorDecision(existing, request.EvidenceKey)})
+	disposition := model.BlockerDisposition{
+		RunID:        runID,
+		EvidenceKey:  request.EvidenceKey,
+		RuleCode:     evidence.RuleCode,
+		Decision:     string(decision),
+		Reason:       reason,
+		ReviewedBy:   actor.ID,
+		ReviewerName: actor.Username,
+	}
+	after := util.SummaryJSON(map[string]any{"run_id": runID, "evidence_key": request.EvidenceKey, "rule_code": evidence.RuleCode, "decision": decision, "reason": reason, "reviewer_id": actor.ID, "reviewer": actor.Username, "version": request.Version + 1})
+	updated, err := s.dispositions.Register(runID, request.Version, disposition, audit.NewEvent(actor, "rehearsal_run.blocker_disposition", "rehearsal_run", runID, before, after))
+	if err != nil {
+		return dto.RehearsalRunResponse{}, err
+	}
+	return s.responseForRun(updated)
+}
+
+// findBlockingEvidence locates the immutable blocking evidence row matching
+// the stable key inside the run snapshot.
+func findBlockingEvidence(run model.RehearsalRun, evidenceKey string) (interlock.RuleEvidence, error) {
+	var results []interlock.RuleEvidence
+	if err := json.Unmarshal(run.RuleResultsJSON, &results); err != nil {
+		return interlock.RuleEvidence{}, fmt.Errorf("decode run %d rule results: %w", run.ID, err)
+	}
+	for _, evidence := range results {
+		if !evidence.Result.Blocking() {
+			continue
+		}
+		if interlock.EvidenceKey(evidence) == evidenceKey {
+			return evidence, nil
+		}
+	}
+	return interlock.RuleEvidence{}, util.Unprocessable("BLOCKER_EVIDENCE_NOT_FOUND", "the evidence key does not match any blocking evidence of this run", map[string]any{"run_id": run.ID, "evidence_key": evidenceKey})
+}
+
+func priorDecision(items []model.BlockerDisposition, evidenceKey string) any {
+	for _, item := range items {
+		if item.EvidenceKey == evidenceKey {
+			return map[string]any{"decision": item.Decision, "reason": item.Reason, "reviewer_id": item.ReviewedBy}
+		}
+	}
+	return nil
 }

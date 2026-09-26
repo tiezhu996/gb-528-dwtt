@@ -13,6 +13,12 @@ func (r InterlockResult) Valid() bool {
 	return r == ResultPass || r == ResultWarning || r == ResultBlocker || r == ResultInvalid
 }
 
+// Blocking reports whether evidence of this severity prevents rehearsal
+// approval unless a safety reviewer registers a per-blocker disposition.
+func (r InterlockResult) Blocking() bool {
+	return r == ResultBlocker || r == ResultInvalid
+}
+
 func SeverityRank(result InterlockResult) int {
 	switch result {
 	case ResultInvalid:

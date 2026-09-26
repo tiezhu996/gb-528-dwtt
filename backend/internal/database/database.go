@@ -65,6 +65,7 @@ func migrate(db *gorm.DB) error {
 		&model.CueDefinition{},
 		&model.InterlockRule{},
 		&model.RehearsalRun{},
+		&model.BlockerDisposition{},
 		&audit.Event{},
 	); err != nil {
 		return fmt.Errorf("migrate database: %w", err)
